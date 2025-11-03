@@ -1,0 +1,297 @@
+openapi: 3.0.3
+info:
+  title: Comments API
+  version: 1.0.0
+servers:
+  - url: /api
+paths:
+  /comments:
+    post:
+      summary: Create comment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentDto'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+  /comments/{id}:
+    patch:
+      summary: Update comment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommentDto'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+    delete:
+      summary: Delete comment (admin)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+  /comments/{id}/hide:
+    patch:
+      summary: Hide/unhide comment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hidden:
+                  type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+  /comments/{id}/pin:
+    patch:
+      summary: Pin/unpin comment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pinned:
+                  type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+  /comments/threads:
+    get:
+      summary: Get threads for object
+      parameters:
+        - in: query
+          name: layerTypeId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: objectId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - in: query
+          name: onlyRoots
+          schema: { type: boolean }
+        - in: query
+          name: includeHidden
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Thread'
+                  total:
+                    type: integer
+                  pinnedCommentId:
+                    type: string
+                    nullable: true
+  /comments/search:
+    get:
+      summary: Search comments
+      parameters:
+        - in: query
+          name: text
+          schema: { type: string }
+        - in: query
+          name: authorId
+          schema: { type: string }
+        - in: query
+          name: layerTypeId
+          schema: { type: string }
+        - in: query
+          name: objectId
+          schema: { type: string }
+        - in: query
+          name: onlyRoots
+          schema: { type: boolean }
+        - in: query
+          name: includeHidden
+          schema: { type: boolean }
+        - in: query
+          name: page
+          schema: { type: integer }
+        - in: query
+          name: pageSize
+          schema: { type: integer }
+        - in: query
+          name: sort
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Comment'
+                  total:
+                    type: integer
+  /comments/objects:
+    get:
+      summary: Objects index with comments
+      parameters:
+        - in: query
+          name: sort
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer }
+        - in: query
+          name: pageSize
+          schema: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ObjectIndexItem'
+                  total:
+                    type: integer
+  /comments/{id}/read:
+    post:
+      summary: Mark comment read/unread
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                read:
+                  type: boolean
+      responses:
+        '200':
+          description: OK
+
+components:
+  schemas:
+    CreateCommentDto:
+      type: object
+      required: [layerTypeId, objectId, text]
+      properties:
+        layerTypeId: { type: string }
+        objectId: { type: string }
+        parentId: { type: string, nullable: true }
+        text: { type: string, maxLength: 2000 }
+        notifiedUserIds:
+          type: array
+          items: { type: string }
+    UpdateCommentDto:
+      type: object
+      properties:
+        text: { type: string, maxLength: 2000 }
+        notifiedUserIds:
+          type: array
+          items: { type: string }
+    Comment:
+      type: object
+      properties:
+        id: { type: string }
+        parentId: { type: string, nullable: true }
+        level: { type: integer, minimum: 0, maximum: 3 }
+        text: { type: string }
+        authorId: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        isHidden: { type: boolean }
+        isPinned: { type: boolean }
+        notifiedUserIds:
+          type: array
+          items: { type: string }
+        layerTypeId: { type: string }
+        objectId: { type: string }
+    Thread:
+      type: object
+      properties:
+        rootCommentId: { type: string }
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+        repliesCount: { type: integer }
+        lastActivityAt: { type: string, format: date-time }
+    ObjectIndexItem:
+      type: object
+      properties:
+        layerTypeId: { type: string }
+        objectId: { type: string }
+        objectTitle: { type: string }
+        lastActivityAt: { type: string, format: date-time }
+        pinnedCommentId: { type: string, nullable: true }
+        totalCount: { type: integer }

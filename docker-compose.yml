@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  # 1. Наш NestJS додаток
+  api:
+    build: . # Використовувати Dockerfile з поточної папки
+    ports:
+      - "3000:3000" # Прокидаємо порт 3000 назовні
+    environment:
+      # Вказуємо, як додатку підключитись до БД
+      DB_HOST: db # "db" - це ім'я сервісу нижче
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME} # Беремо з вашого .env файлу
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DATABASE: ${DB_DATABASE}
+    depends_on:
+      - db # Запустити додаток лише ПІСЛЯ запуску БД
+
+  # 2. Наш сервіс бази даних
+  db:
+    image: postgres:16-alpine # Використовувати офіційний образ Postgres 16
+    environment:
+      # === Ось тут магія ===
+      # Docker АВТОМАТИЧНО створить базу і користувача
+      # використовуючи ці змінні з вашого .env файлу
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_DATABASE}
+    ports:
+      - "5432:5432" # Прокидаємо порт, щоб підключитись через pgAdmin (опційно)
+    volumes:
+      - postgres-data:/var/lib/postgresql/data # Зберігаємо дані, щоб вони не зникали
+
+# Створюємо "volume" для збереження даних БД
+volumes:
+  postgres-data:
