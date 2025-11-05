@@ -12,6 +12,9 @@ export class User {
   @Column({ unique: true })
   email: string;
   
-  @Column({ type: 'text', default: Role.User })
+  @Column({ select: false }) // Не повертати пароль при запитах
+  password?: string;
+  
+  @Column({ type: 'text', default: Role.user })
   role: Role;
 }

@@ -18,9 +18,9 @@ import { CommentQueryDto } from './dto/comment-query.dto';
 import { Role } from '../users/dicts/role.enum';
 import { CommentUpdateDto } from './dto/comment-update.dto';
 import { CommentOwnerGuard } from './guards/comment-owner.guard';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AuthGuard } from '@nestjs/passport';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(AuthGuard('jwt'))
 @Controller('comments')
 export class CommentsController {
   constructor(private readonly commentsService: CommentsService) {}
@@ -33,7 +33,7 @@ export class CommentsController {
 
   @Get()
   findAll(@Query() query: CommentQueryDto, @Req() req) {
-    if (req.user.role !== Role.Admin) {
+    if (req.user.role !== Role.admin) {
       query.isShowHidden = false;
     }
     return this.commentsService.findAll(query, req.user.id);
@@ -62,7 +62,7 @@ export class CommentsController {
     @Query('hardDelete') hardDelete?: boolean,
   ) {
     const user = req.user;
-    if (hardDelete && user.role !== Role.Admin) {
+    if (hardDelete && user.role !== Role.admin) {
       throw new ForbiddenException('Only admin can hard delete comments.');
     }
 

@@ -15,7 +15,7 @@ export class CommentOwnerGuard implements CanActivate {
       return false;
     }
     
-    if (user.role === Role.Admin) {
+    if (user.role === Role.admin) {
       return true;
     }
     

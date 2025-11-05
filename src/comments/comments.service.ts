@@ -158,7 +158,7 @@ export class CommentsService {
       .addSelect('COUNT(comment.id)', 'commentCount')
       .groupBy('comment.objectTypeId, comment.objectId');
     
-    if (user.role !== Role.Admin) {
+    if (user.role !== Role.admin) {
       qb.where('comment.isHidden = false');
     }
     
