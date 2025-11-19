@@ -38,6 +38,10 @@ export class CommentResponseDto {
   @IsOptional()
   parentId: string | null;
   
+  @IsUUID()
+  @IsOptional()
+  rootCommentId: string | null;
+  
   @IsInt()
   level: number;
   

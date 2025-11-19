@@ -46,6 +46,7 @@ export class CommentsService {
     let objectTypeId = dto.objectTypeId;
     let objectId = dto.objectId;
     let level = 0;
+    let rootCommentId: string | null = null;
     
     if (dto.parentId) {
       parentComment = await this.commentRepository.findOneBy({
@@ -57,15 +58,18 @@ export class CommentsService {
         );
       }
       
-      if (parentComment.level >= 3) {
-        throw new BadRequestException('Max nesting level (3) reached.');
-      }
-      
       newComment.parent = parentComment;
       level = parentComment.level + 1;
       
       objectTypeId = parentComment.objectTypeId;
       objectId = parentComment.objectId;
+      
+      if (parentComment.rootCommentId) {
+        rootCommentId = parentComment.rootCommentId
+      } else {
+        rootCommentId = parentComment.id
+      }
+      
     } else if (!objectTypeId || !objectId) {
       throw new BadRequestException('objectTypeId and objectId are required for a new comment');
     }
@@ -73,6 +77,7 @@ export class CommentsService {
     newComment.objectTypeId = objectTypeId;
     newComment.objectId = objectId;
     newComment.level = level;
+    newComment.rootCommentId = rootCommentId;
     
     const savedComment = await this.commentRepository.save(newComment);
     
@@ -232,6 +237,50 @@ export class CommentsService {
       // Подія для оновлення індикатора нотифікацій в реальному часі
       this.eventEmitter.emit(`${EntityName.comment}.${EventType.read}`, { commentId, userId })
     }
+  }
+  
+  async findThreadReplies(
+    rootId: string,
+    query: CommentQueryDto,
+    currentUserId: string,
+  ): Promise<ResponsePaginationDto<CommentResponseDto>> {
+    const { page = 1, limit = 50 } = query; // Для чату ліміт зазвичай більший
+    const skip = (page - 1) * limit;
+    
+    // Перевіримо, чи існує тема
+    const rootExists = await this.commentRepository.findOneBy({ id: rootId });
+    if (!rootExists) {
+      throw new NotFoundException(`Thread (Root Comment) with ID ${rootId} not found`);
+    }
+    
+    const qb = this.commentRepository.createQueryBuilder('comment');
+    
+    // Вибираємо всі коментарі, де rootCommentId = нашому ID
+    qb.where('comment.rootCommentId = :rootId', { rootId });
+    
+    // Якщо це не адмін, не показуємо приховані
+    if (!query.isShowHidden) {
+      qb.andWhere('comment.isHidden = false');
+    }
+    
+    // Сортування як у чаті: старі зверху (хронологія)
+    qb.orderBy('comment.createdAt', 'ASC');
+    
+    // Пагінація
+    qb.skip(skip).take(limit);
+    
+    // Зв'язки (Relations)
+    qb.leftJoinAndSelect('comment.author', 'author')
+      .leftJoinAndSelect('comment.notifications', 'notifications')
+      .leftJoinAndSelect('notifications.user', 'notifiedUser')
+      // Load read status for current user
+      .leftJoinAndSelect('comment.readStatuses', 'readStatuses', 'readStatuses.userId = :currentUserId', { currentUserId });
+    
+    const [comments, total] = await qb.getManyAndCount();
+    
+    const data = comments.map(comment => this.transformCommentResponse(comment, currentUserId));
+    
+    return { data, total, page, limit };
   }
   
   async findAll(query: CommentQueryDto, currentUserId: string): Promise<ResponsePaginationDto<CommentResponseDto>> {

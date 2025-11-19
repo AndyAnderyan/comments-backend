@@ -2,7 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  Index,
+  Index, JoinColumn,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
@@ -57,6 +57,15 @@ export class Comment {
 
   @Column({ nullable: true })
   parentId: string;
+  
+  // --- НОВЕ ПОЛЕ (comentId / rootCommentId) ---
+  // Це ID "теми" (найпершого коментаря в ланцюжку)
+  @Column({ nullable: true })
+  rootCommentId: string | null;
+  
+  @ManyToOne(() => Comment, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'rootCommentId' })
+  rootComment: Comment;
 
   @Column({ type: 'int', default: 0 })
   level: number;
