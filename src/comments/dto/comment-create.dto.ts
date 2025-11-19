@@ -10,18 +10,18 @@ import {
 export class CommentCreateDto {
   @IsString()
   @IsNotEmpty()
-  @MaxLength(2000)
-  text: string;
-
-  @IsString()
-  @IsNotEmpty()
   @IsOptional()
   objectTypeId?: string;
-
+  
   @IsString()
   @IsNotEmpty()
   @IsOptional()
   objectId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  text: string;
 
   @IsUUID()
   @IsOptional()
@@ -30,5 +30,5 @@ export class CommentCreateDto {
   @IsArray()
   @IsUUID('all', { each: true })
   @IsOptional()
-  notifyUserIds?: string[] = [];
+  recipientsIds?: string[] = [];
 }

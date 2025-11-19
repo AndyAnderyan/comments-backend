@@ -3,6 +3,8 @@ import { OnGatewayConnection, OnGatewayDisconnect, WebSocketGateway, WebSocketSe
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { NotificationsService } from './notifications.service';
+import { EventType } from './dicts/event-type.enum';
+import { EntityName } from './dicts/entity-name.enum';
 
 @Injectable()
 @WebSocketGateway({
@@ -11,16 +13,17 @@ import { NotificationsService } from './notifications.service';
 })
 export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server
+  server: Server;
   
-  private readonly logger = new Logger(NotificationsGateway.name)
+  private readonly logger = new Logger(NotificationsGateway.name);
   private connectedUsers = new Map<string, string>();
   
   constructor(
     private readonly jwtService: JwtService,
     @Inject(forwardRef(() => NotificationsService)) // <-- Оберніть ін'єкцію
     private readonly notificationsService: NotificationsService, // <-- Це залежність [1] (яку Nest не бачить)
-  ) {}
+  ) {
+  }
   
   async handleConnection(client: Socket) {
     try {
@@ -36,9 +39,9 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
       this.logger.log(`User ${userId} connected with socket ${client.id}`);
       
       // TODO: Додати метод в NotificationsService
-      // Відправляємо поточку кількість непрочитаних сповіщень
+      // Відправляємо поточну кількість непрочитаних сповіщень
       const unreadCount = await this.notificationsService.getUnreadCount(userId);
-      client.emit('unread_count', unreadCount)
+      client.emit('unread-count', unreadCount);
     } catch (e) {
       this.logger.error(`Connection failed: ${e.message}`);
       client.disconnect();
@@ -57,7 +60,7 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
   sendNotificationToUser(userId: string, payload: any) {
     const socketId = this.connectedUsers.get(userId);
     if (socketId) {
-      this.server.to(socketId).emit('new_notification', payload);
+      this.server.to(socketId).emit(`${EntityName.notification}.${EventType.created}`, payload);
       this.logger.log(`Sent notification to user ${userId} (socket ${socketId})`);
     } else {
       this.logger.warn(`User ${userId} is not connected. Notification queued.`);
@@ -67,7 +70,12 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
   updateUnreadCount(userId: string, count: number) {
     const socketId = this.connectedUsers.get(userId);
     if (socketId) {
-      this.server.to(socketId).emit('unread_count_update', { count })
+      this.server.to(socketId).emit(`${EntityName.unreadCount}.${EventType.updated}`, { count });
     }
+  }
+  
+  broadcastEvent(eventName: string, payload: any) {
+    this.server.emit(eventName, payload);
+    this.logger.log(`Broadcasted event [${eventName}] to all clients.`);
   }
 }

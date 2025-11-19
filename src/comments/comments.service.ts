@@ -13,6 +13,12 @@ import { CommentQueryDto } from './dto/comment-query.dto';
 import { CommentReadStatus } from './entities/comment-read-status.entity';
 import { CommentNotification } from './entities/comment-notification.entity';
 import { Role } from '../users/dicts/role.enum';
+import { ResponsePaginationDto } from '../common/dto/response-pagination.dto';
+import { CommentResponseDto } from './dto/comment-response.dto';
+import { LogDto } from '../logging/dto/log.dto';
+import { EntityName } from '../notifications/dicts/entity-name.enum';
+import { EventType } from '../notifications/dicts/event-type.enum';
+import { ActionType } from '../notifications/dicts/action-type.enum';
 
 @Injectable()
 export class CommentsService {
@@ -24,7 +30,7 @@ export class CommentsService {
     private readonly readStatusRepository: Repository<CommentReadStatus>,
     
     @InjectRepository(CommentNotification)
-    private readonly notificationRepository: Repository<CommentNotification>,
+    private readonly commentNotificationRepository: Repository<CommentNotification>,
     
     private readonly eventEmitter: EventEmitter2,
   ) {
@@ -70,18 +76,18 @@ export class CommentsService {
     
     const savedComment = await this.commentRepository.save(newComment);
     
-    if (dto.notifyUserIds && dto.notifyUserIds.length > 0) {
-      await this.handleNotifications(savedComment.id, dto.notifyUserIds);
-      this.eventEmitter.emit('comment.created', {
+    if (dto.recipientsIds && dto.recipientsIds.length > 0) {
+      await this.handleNotifications(savedComment.id, dto.recipientsIds);
+      this.eventEmitter.emit(`${EntityName.comment}.${EventType.created}`, {
         comment: savedComment,
-        notifiedUserIds: dto.notifyUserIds,
+        notifiedUserIds: dto.recipientsIds,
         author,
       });
     }
     
-    this.eventEmitter.emit('log.action', {
+    this.eventEmitter.emit(`${EntityName.log}.${EventType.created}}`, {
       userId: author.id,
-      actionType: 'CREATE_COMMENT',
+      actionType: `${ActionType.create}.${EntityName.comment}`,
       targetId: savedComment.id,
       payloadAfter: savedComment,
     });
@@ -91,7 +97,144 @@ export class CommentsService {
     return savedComment;
   }
   
-  async findAll(query: CommentQueryDto, currentUserId: string) {
+  async update(id: string, dto: CommentUpdateDto, user: User): Promise<Comment> {
+    const comment = await this.findCommentById(id);
+    const oldPayload = { ...comment };
+    
+    comment.text = dto.text;
+    
+    if (dto.recipientsIds) {
+      await this.handleNotifications(id, dto.recipientsIds);
+      // TODO: Подія для оновлення сповіщення
+    }
+    
+    const updatedComment = await this.commentRepository.save(comment);
+    
+    this.eventEmitter.emit(`${EntityName.comment}.${EventType.updated}`, {
+      comment: updatedComment
+    })
+    
+    this.eventEmitter.emit(`${EntityName.log}.${EventType.created}`, {
+      userId: user.id,
+      actionType: `${ActionType.update}.${EntityName.comment}`,
+      targetId: id,
+      payloadBefore: oldPayload,
+      payloadAfter: updatedComment
+    });
+    
+    return updatedComment;
+  }
+  
+  async hide(id: string, user: User): Promise<void> {
+    const comment = await this.findCommentById(id);
+    
+    const descendants = await this.commentRepository.findDescendants(comment);
+    const idsToHide = descendants.map(d => d.id);
+    
+    await this.commentRepository.update({ id: In(idsToHide) }, { isHidden: true })
+    
+    this.eventEmitter.emit(`${EntityName.comment}.${EventType.hidden}`, {
+      objectTypeId: comment.objectTypeId,
+      objectId: comment.objectId,
+      id: comment.id,
+      isHidden: true
+    })
+    
+    this.eventEmitter.emit(`${EntityName.log}.${EventType.created}`, {
+      userId: user.id,
+      actionType: `${ActionType.hide}.${EntityName.comment}`,
+      targetId: id,
+      payloadInfo: `Comment ${id} and ${idsToHide.length - 1} children hidden.`,
+    });
+  }
+  
+  async hardDelete(id: string, user: User): Promise<void> {
+    const comment = await this.findCommentById(id);
+    
+    // TreeRepository.remove() автоматично видаляє всіх нащадків
+    await this.commentRepository.remove(comment);
+    
+    this.eventEmitter.emit(`${EntityName.comment}.${EventType.deleted}`, {
+      objectTypeId: comment.objectTypeId,
+      objectId: comment.objectId,
+      id: id,
+    })
+    
+    this.eventEmitter.emit(`${EntityName.log}.${EventType.created}`, {
+      userId: user.id,
+      actionType: `${ActionType.delete}.${EntityName.comment}`,
+      targetId: id,
+      payloadBefore: comment,
+    })
+  }
+  
+  async pin(id: string, user: User) {
+    const commentToPin = await this.findCommentById(id);
+    
+    await this.commentRepository.manager.transaction(async (transactionalEntityManager) => {
+      await transactionalEntityManager.update(
+        Comment,
+        {
+          objectTypeId: commentToPin.objectTypeId,
+          objectId: commentToPin.objectId,
+          isPinned: true
+        },
+        { isPinned: false }
+      );
+      
+      commentToPin.isPinned = true;
+      await transactionalEntityManager.save(commentToPin);
+    });
+    
+    this.eventEmitter.emit(`${EntityName.comment}.${EventType.pinned}`, {
+      objectTypeId: commentToPin.objectTypeId,
+      objectId: commentToPin.objectId,
+      pinnedCommentId: commentToPin.id
+    })
+    
+    this.eventEmitter.emit(`${EntityName.log}.${EventType.created}`, {
+      userId: user.id,
+      actionType: `${ActionType.pin}.${EntityName.comment}`,
+      targetId: id,
+    })
+    
+    return commentToPin;
+  }
+  
+  async unpin(id: string, user: User): Promise<Comment> {
+    const comment = await this.findCommentById(id);
+    comment.isPinned = false;
+    
+    const unpinnedComment = await this.commentRepository.save(comment);
+    
+    this.eventEmitter.emit(`${EntityName.comment}.${EventType.pinned}`, {
+      objectTypeId: unpinnedComment.objectTypeId,
+      objectId: unpinnedComment.objectId,
+      pinnedCommentId: null,
+    })
+    
+    this.eventEmitter.emit(`${EntityName.log}.${EventType.created}`, {
+      userId: user.id,
+      actionType: `${ActionType.unpin}.${EntityName.comment}`,
+      targetId: id,
+    })
+    
+    return unpinnedComment;
+  }
+  
+  async markAsRead(commentId: string, userId: string) {
+    const exists = await this.readStatusRepository.findOneBy({ commentId, userId });
+    
+    if (!exists) {
+      const readStatus = this.readStatusRepository.create({ commentId, userId })
+      await this.readStatusRepository.save(readStatus);
+      
+      // Подія для оновлення індикатора нотифікацій в реальному часі
+      this.eventEmitter.emit(`${EntityName.comment}.${EventType.read}`, { commentId, userId })
+    }
+  }
+  
+  async findAll(query: CommentQueryDto, currentUserId: string): Promise<ResponsePaginationDto<CommentResponseDto>> {
     const {
       page = 1, limit = 20, objectTypeId, objectId, authorId, searchText, topLevelOnly, isShowHidden, sortBy = 'createdAt', sortOrder = "DESC"
     } = query;
@@ -135,19 +278,20 @@ export class CommentsService {
   
   private transformCommentResponse(comment: Comment, currentUserId: string) {
     const isRead = comment.readStatuses && comment.readStatuses.length > 0;
-    const notifiedUsers = (comment.notifications || []).map(n => n.user);
+    const recipients = (comment.notifications || []).map(n => n.user);
     
-    const isNotifiedAndUnread = notifiedUsers.some(u => u.id === currentUserId) && !isRead;
+    const isNotifiedToMeAndUnread = recipients.some(u => u.id === currentUserId) && !isRead;
     
-    return {
+    const responseDto: CommentResponseDto = {
       ...comment,
-      author: { id: comment.author.id, name: comment.author.name },
-      notifiedUsers: notifiedUsers.map(u => ({ id: u.id, name: u.name })),
-      isRead: isRead,
-      isNotifiedToMeAndUnread: isNotifiedAndUnread,
-      readStatuses: undefined,
-      notifications: undefined,
+      recipients,
+      isRead,
+      isNotifiedToMeAndUnread,
+      // @ts-ignore (repliesCount додається динамічно через loadRelationCountAndMap)
+      repliesCount: comment.repliesCount,
     }
+    
+    return responseDto
   }
   
   async findObjectsWithComments(query: any, user: User) {
@@ -177,106 +321,6 @@ export class CommentsService {
     return results;
   }
   
-  
-  async update(id: string, dto: CommentUpdateDto, user: User): Promise<Comment> {
-    const comment = await this.findCommentById(id);
-    const oldPayload = { ...comment };
-    
-    comment.text = dto.text;
-    
-    if (dto.notifyUserIds) {
-      await this.handleNotifications(id, dto.notifyUserIds);
-      // TODO: Подія для оновлення сповіщення
-    }
-    
-    const updatedComment = await this.commentRepository.save(comment);
-    
-    this.eventEmitter.emit('log.actions', {
-      userId: user.id,
-      actionType: 'UPDATE_COMMENT',
-      targetId: id,
-      payloadBefore: oldPayload,
-      payloadAfter: updatedComment
-    });
-    
-    return updatedComment;
-  }
-  
-  async hide(id: string, user: User): Promise<void> {
-    const comment = await this.findCommentById(id);
-    
-    const descendants = await this.commentRepository.findDescendants(comment);
-    const idsToHide = descendants.map(d => d.id);
-    
-    await this.commentRepository.update({ id: In(idsToHide) }, { isHidden: true })
-    
-    this.eventEmitter.emit('log.action', {
-      userId: user.id,
-      actionType: 'HIDE_COMMENT',
-      targetId: id,
-      payloadInfo: `Comment ${id} and ${idsToHide.length - 1} children hidden.`,
-    });
-  }
-  
-  async hardDelete(id: string, user: User): Promise<void> {
-    const comment = await this.findCommentById(id);
-    
-    // TreeRepository.remove() автоматично видаляє всіх нащадків
-    await this.commentRepository.remove(comment);
-    
-    this.eventEmitter.emit('log.action', {
-      userId: user.id,
-      actionType: 'DELETE_COMMENT',
-      targetId: id,
-      payloadBefore: comment,
-    })
-  }
-  
-  async pin(id: string, user: User) {
-    const commentToPin = await this.findCommentById(id);
-    
-    await this.commentRepository.manager.transaction(async (transactionalEntityManager) => {
-      await transactionalEntityManager.update(
-        Comment,
-        {
-          objectTypeId: commentToPin.objectTypeId,
-          objectId: commentToPin.objectId,
-          isPinned: true
-        },
-        { isPinned: false }
-      );
-      
-      commentToPin.isPinned = true;
-      await transactionalEntityManager.save(commentToPin);
-    });
-    
-    // TODO: Додати логіку для логування PIN
-    this.eventEmitter.emit('log.action', {})
-    
-    return commentToPin;
-  }
-  
-  async unpin(id: string, user: User): Promise<Comment> {
-    const comment = await this.findCommentById(id);
-    comment.isPinned = false;
-    
-    // TODO: Додати логіку для логування UNPIN
-    this.eventEmitter.emit('log.action', {})
-    return this.commentRepository.save(comment);
-  }
-  
-  async markAsRead(commentId: string, userId: string) {
-    const exists = await this.readStatusRepository.findOneBy({ commentId, userId });
-    
-    if (!exists) {
-      const readStatus = this.readStatusRepository.create({ commentId, userId })
-      await this.readStatusRepository.save(readStatus);
-      
-      // Подія для оновлення індикатора нотифікацій в реальному часі
-      this.eventEmitter.emit('comment.read', { commentId, userId })
-    }
-  }
-  
   async findCommentById(id: string): Promise<Comment> {
     const comment = await this.commentRepository.findOne({
       where: { id },
@@ -289,9 +333,9 @@ export class CommentsService {
   }
   
   private async handleNotifications(commentId: string, notifyUserIds: string[]) {
-    await this.notificationRepository.delete({ commentId });
+    await this.commentNotificationRepository.delete({ commentId });
     
-    const notifications = notifyUserIds.map(userId => this.notificationRepository.create({ commentId, userId }))
-    await this.notificationRepository.save(notifications);
+    const notifications = notifyUserIds.map(userId => this.commentNotificationRepository.create({ commentId, userId }))
+    await this.commentNotificationRepository.save(notifications);
   }
 }

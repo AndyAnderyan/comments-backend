@@ -16,5 +16,5 @@ export class CommentUpdateDto {
   @IsArray()
   @IsUUID('all', { each: true })
   @IsOptional()
-  notifyUserIds?: string[];
+  recipientsIds?: string[];
 }
