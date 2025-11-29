@@ -39,17 +39,6 @@ export class CommentsController {
     return this.commentsService.findAll(query, req.user.id);
   }
   
-  @Get(':id/replies')
-  findThreadReplies(
-    @Param('id', ParseUUIDPipe) rootId: string,
-    @Query() query: CommentQueryDto,
-    @Req() req
-  ) {
-    if (req.user.role !== Role.admin) {
-      query.isShowHidden = false;
-    }
-    return this.commentsService.findThreadReplies(rootId, query, req.user.id);
-  }
 
   @Get('objects-list')
   findObjectsWithComments(@Query() query, @Req() req) {

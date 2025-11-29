@@ -102,6 +102,50 @@ export class CommentsService {
     return savedComment;
   }
   
+  async findThreadReplies(
+    rootId: string,
+    query: CommentQueryDto,
+    currentUserId: string,
+  ): Promise<ResponsePaginationDto<CommentResponseDto>> {
+    const { page = 1, limit = 50 } = query; // Для чату ліміт зазвичай більший
+    const skip = (page - 1) * limit;
+    
+    // Перевіримо, чи існує тема
+    const rootExists = await this.commentRepository.findOneBy({ id: rootId });
+    if (!rootExists) {
+      throw new NotFoundException(`Thread (Root Comment) with ID ${rootId} not found`);
+    }
+    
+    const qb = this.commentRepository.createQueryBuilder('comment');
+    
+    // Вибираємо всі коментарі, де rootCommentId = нашому ID
+    qb.where('comment.rootCommentId = :rootId', { rootId });
+    
+    // Якщо це не адмін, не показуємо приховані
+    if (!query.isShowHidden) {
+      qb.andWhere('comment.isHidden = false');
+    }
+    
+    // Сортування як у чаті: старі зверху (хронологія)
+    qb.orderBy('comment.createdAt', 'ASC');
+    
+    // Пагінація
+    qb.skip(skip).take(limit);
+    
+    // Зв'язки (Relations)
+    qb.leftJoinAndSelect('comment.author', 'author')
+      .leftJoinAndSelect('comment.notifications', 'notifications')
+      .leftJoinAndSelect('notifications.user', 'notifiedUser')
+      // Load read status for current user
+      .leftJoinAndSelect('comment.readStatuses', 'readStatuses', 'readStatuses.userId = :currentUserId', { currentUserId });
+    
+    const [comments, total] = await qb.getManyAndCount();
+    
+    const data = comments.map(comment => this.transformCommentResponse(comment, currentUserId));
+    
+    return { data, total, page, limit };
+  }
+  
   async update(id: string, dto: CommentUpdateDto, user: User): Promise<Comment> {
     const comment = await this.findCommentById(id);
     const oldPayload = { ...comment };
@@ -176,17 +220,29 @@ export class CommentsService {
   async pin(id: string, user: User) {
     const commentToPin = await this.findCommentById(id);
     
+    // 1. Знаходимо корінь (тему) цього коментаря
+    const ancestors = await this.commentRepository.findAncestors(commentToPin);
+    // Кореневий коментар - це той, у якого немає parentId (або він сам, якщо це тема)
+    const root = ancestors.find(c => !c.parentId) || commentToPin;
+    
+    // 2. Знаходимо всіх нащадків цієї теми (всі повідомлення чату)
+    const descendants = await this.commentRepository.findDescendants(root);
+    const relatedIds = descendants.map(d => d.id);
+    // Додаємо ID самої теми, якщо вона не в списку
+    if (!relatedIds.includes(root.id)) relatedIds.push(root.id);
+    
     await this.commentRepository.manager.transaction(async (transactionalEntityManager) => {
+      // 3. Знімаємо PIN тільки з повідомлень цієї теми
       await transactionalEntityManager.update(
         Comment,
         {
-          objectTypeId: commentToPin.objectTypeId,
-          objectId: commentToPin.objectId,
+          id: In(relatedIds), // Важливо: фільтруємо по ID гілки
           isPinned: true
         },
         { isPinned: false }
       );
       
+      // 4. Закріплюємо потрібний
       commentToPin.isPinned = true;
       await transactionalEntityManager.save(commentToPin);
     });
@@ -194,7 +250,8 @@ export class CommentsService {
     this.eventEmitter.emit(`${EntityName.comment}.${EventType.pinned}`, {
       objectTypeId: commentToPin.objectTypeId,
       objectId: commentToPin.objectId,
-      pinnedCommentId: commentToPin.id
+      pinnedCommentId: commentToPin.id,
+      topicId: root.id
     })
     
     this.eventEmitter.emit(`${EntityName.log}.${EventType.created}`, {
@@ -237,50 +294,6 @@ export class CommentsService {
       // Подія для оновлення індикатора нотифікацій в реальному часі
       this.eventEmitter.emit(`${EntityName.comment}.${EventType.read}`, { commentId, userId })
     }
-  }
-  
-  async findThreadReplies(
-    rootId: string,
-    query: CommentQueryDto,
-    currentUserId: string,
-  ): Promise<ResponsePaginationDto<CommentResponseDto>> {
-    const { page = 1, limit = 50 } = query; // Для чату ліміт зазвичай більший
-    const skip = (page - 1) * limit;
-    
-    // Перевіримо, чи існує тема
-    const rootExists = await this.commentRepository.findOneBy({ id: rootId });
-    if (!rootExists) {
-      throw new NotFoundException(`Thread (Root Comment) with ID ${rootId} not found`);
-    }
-    
-    const qb = this.commentRepository.createQueryBuilder('comment');
-    
-    // Вибираємо всі коментарі, де rootCommentId = нашому ID
-    qb.where('comment.rootCommentId = :rootId', { rootId });
-    
-    // Якщо це не адмін, не показуємо приховані
-    if (!query.isShowHidden) {
-      qb.andWhere('comment.isHidden = false');
-    }
-    
-    // Сортування як у чаті: старі зверху (хронологія)
-    qb.orderBy('comment.createdAt', 'ASC');
-    
-    // Пагінація
-    qb.skip(skip).take(limit);
-    
-    // Зв'язки (Relations)
-    qb.leftJoinAndSelect('comment.author', 'author')
-      .leftJoinAndSelect('comment.notifications', 'notifications')
-      .leftJoinAndSelect('notifications.user', 'notifiedUser')
-      // Load read status for current user
-      .leftJoinAndSelect('comment.readStatuses', 'readStatuses', 'readStatuses.userId = :currentUserId', { currentUserId });
-    
-    const [comments, total] = await qb.getManyAndCount();
-    
-    const data = comments.map(comment => this.transformCommentResponse(comment, currentUserId));
-    
-    return { data, total, page, limit };
   }
   
   async findAll(query: CommentQueryDto, currentUserId: string): Promise<ResponsePaginationDto<CommentResponseDto>> {
@@ -326,6 +339,7 @@ export class CommentsService {
   }
   
   private transformCommentResponse(comment: Comment, currentUserId: string) {
+    console.log(comment);
     const isRead = comment.readStatuses && comment.readStatuses.length > 0;
     const recipients = (comment.notifications || []).map(n => n.user);
     

@@ -53,7 +53,7 @@ export class CommentQueryDto {
 
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(99999)
   @IsOptional()
   @Type(() => Number)
   limit?: number = 20;
